@@ -1,0 +1,464 @@
+# Cursor AI Rules â€” Senior Engineering Enforcement
+
+# Location: .cursor/rules/senior-engineering.mdc
+
+# This file enforces the architectural thinking and coding standards
+
+# of a developer in transition from junior to senior engineer level.
+
+---
+
+## WHO THIS DEVELOPER IS
+
+Junior engineer in structured mentorship toward senior/architect level.
+Stack: React / Next.js + Node.js / Express + TypeScript.
+Goal: Every file produced must reflect senior-level thinking â€” not just working code,
+but designed code where every boundary is justified by a specific actor and change scenario.
+
+The developer has completed SOLID principles training with documented gaps.
+They are now learning GOF Design Patterns (Creational phase).
+Do NOT generate code that violates the rules below, even if asked.
+If a request would produce a violation, generate the correct version and explain why.
+
+---
+
+## ABSOLUTE CODE GENERATION RULES
+
+### 1. NO BUSINESS LOGIC MAY IMPORT INFRASTRUCTURE DIRECTLY
+
+NEVER generate this pattern inside a service, use-case, or domain file:
+
+```typescript
+// FORBIDDEN in any service/domain/use-case file
+import Stripe from "stripe";
+import sgMail from "@sendgrid/mail";
+import bcrypt from "bcrypt";
+import { Pool } from "pg";
+import jwt from "jsonwebtoken";
+```
+
+ALWAYS generate this pattern instead:
+
+```typescript
+// CORRECT â€” business logic depends on abstraction
+import { IPaymentGateway } from "../interfaces/IPaymentGateway";
+import { IEmailService } from "../interfaces/IEmailService";
+import { IPasswordService } from "../interfaces/IPasswordService";
+import { IUserRepository } from "../interfaces/IUserRepository";
+import { ITokenService } from "../interfaces/ITokenService";
+```
+
+The infrastructure import belongs ONLY in the implementation file:
+
+```typescript
+// CORRECT â€” infrastructure lives here only
+// src/infrastructure/payment/StripeGateway.ts
+import Stripe from 'stripe';
+export class StripeGateway implements IPaymentGateway { ... }
+```
+
+### 2. NO NEW KEYWORD INSIDE BUSINESS CLASSES
+
+NEVER generate this:
+
+```typescript
+class OrderService {
+  private repo = new PostgresOrderRepository(); // FORBIDDEN
+  private emailer = new SendGridEmailer(); // FORBIDDEN
+  private gateway = new StripeGateway(); // FORBIDDEN
+}
+```
+
+ALWAYS generate this:
+
+```typescript
+class OrderService {
+  constructor(
+    private readonly repo: IOrderRepository, // INJECTED
+    private readonly emailer: IEmailService, // INJECTED
+    private readonly gateway: IPaymentGateway, // INJECTED
+  ) {}
+}
+```
+
+EXCEPTION â€” these MAY be instantiated directly (same boundary, no infrastructure):
+
+```typescript
+// These are pure logic â€” same actor, no external dependencies
+const validator = new OrderValidator();
+const formatter = new CurrencyFormatter();
+const mapper = new OrderMapper();
+```
+
+### 3. ORCHESTRATORS MUST CONTAIN ZERO IMPLEMENTATION DETAILS
+
+Any function named *Controller, *Handler, \*Orchestrator, or any custom hook (useFeature)
+must read like a business document. It coordinates. It does not implement.
+
+FORBIDDEN in an orchestrator:
+
+```typescript
+// FORBIDDEN â€” implementation detail in orchestrator
+async function handleCheckout(req, res) {
+  const hashed = await bcrypt.hash(password, 12); // NO
+  const token = jwt.sign({ userId }, secret); // NO
+  await db.query("INSERT INTO orders VALUES (...)"); // NO
+  await sgMail.send({ to: email, subject: "Order..." }); // NO
+}
+```
+
+REQUIRED orchestrator shape:
+
+```typescript
+// CORRECT â€” reads like the business story
+async function handleCheckout(req: Request, res: Response) {
+  const cart = await cartService.validateAndReserve(cartId, userId);
+  const pricing = await pricingService.calculate(cart);
+  const payment = await paymentGateway.charge(pricing.total, paymentToken);
+  const order = await orderRepository.create(cart, payment);
+  await notificationService.sendOrderConfirmation(userId, order);
+  await analyticsService.track("order_placed", { orderId: order.id });
+  return order;
+}
+```
+
+### 4. EVERY INTERFACE MUST USE DOMAIN LANGUAGE
+
+FORBIDDEN â€” infrastructure leaking into abstraction:
+
+```typescript
+interface IUserRepository {
+  executeRawQuery(sql: string): Promise<any>; // FORBIDDEN
+  beginPostgresTransaction(): Promise<void>; // FORBIDDEN
+  getConnectionPool(): Pool; // FORBIDDEN
+}
+```
+
+REQUIRED â€” domain language only:
+
+```typescript
+interface IUserRepository {
+  findById(id: string): Promise<User | null>;
+  findByEmail(email: string): Promise<User | null>;
+  save(user: User): Promise<User>;
+  delete(userId: string): Promise<void>;
+}
+```
+
+### 5. NO GROWING IF/ELSE OR SWITCH ON TYPE
+
+FORBIDDEN â€” OCP violation that grows:
+
+```typescript
+function processPayment(method: string, amount: number) {
+  if (method === "stripe") {
+    // stripe logic
+  } else if (method === "paypal") {
+    // paypal logic
+  } else if (method === "braintree") {
+    // new variant = modifying this file
+    // braintree logic
+  }
+}
+```
+
+REQUIRED â€” strategy pattern with registry:
+
+```typescript
+// Each variant is its own file. processPayment never changes.
+interface IPaymentStrategy {
+  charge(amount: number): Promise<PaymentResult>;
+}
+
+class PaymentService {
+  constructor(private readonly strategies: Map<string, IPaymentStrategy>) {}
+
+  async process(method: string, amount: number): Promise<PaymentResult> {
+    const strategy = this.strategies.get(method);
+    if (!strategy) throw new Error(`Unknown payment method: ${method}`);
+    return strategy.charge(amount);
+  }
+}
+```
+
+### 6. FRONTEND â€” HOOKS ARE ORCHESTRATORS, COMPONENTS ARE RENDERERS
+
+FORBIDDEN â€” logic inside a component:
+
+```tsx
+// FORBIDDEN â€” component doing too much
+function LoginForm() {
+  const handleSubmit = async () => {
+    const res = await fetch("/api/auth/login", {
+      // NO â€” direct HTTP
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+    localStorage.setItem("token", res.token); // NO â€” storage logic
+    if (!email.includes("@")) return; // NO â€” validation logic
+  };
+}
+```
+
+REQUIRED â€” component renders, hook orchestrates:
+
+```tsx
+// CORRECT â€” component only renders and collects input
+function LoginForm() {
+  const { login, isLoading, error } = useAuth();
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        login({ email, password });
+      }}
+    >
+      {error && <ErrorMessage message={error} />}
+      <button disabled={isLoading}>Login</button>
+    </form>
+  );
+}
+
+// CORRECT â€” hook orchestrates, knows nothing about HTTP or storage internals
+function useAuth() {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const login = useCallback(async (credentials: LoginCredentials) => {
+    const validationError = validateLoginInput(credentials); // validation layer
+    if (validationError) {
+      setError(validationError);
+      return false;
+    }
+    const response = await authApi.login(credentials); // api layer
+    await tokenStorage.store(response.tokens); // storage layer
+    setUser(response.user); // state layer
+    return true;
+  }, []);
+
+  return { login, isLoading, error };
+}
+```
+
+### 7. EVERY MODULE BOUNDARY MUST HAVE A JUSTIFIED COMMENT
+
+When generating any class, service, repository, or hook, include this comment block:
+
+```typescript
+/**
+ * RESPONSIBILITY: [One sentence â€” what this module does]
+ * OWNER: [Which actor/team owns this â€” who sends change requests]
+ * BOUNDARY REASON: [Why this is a separate module â€” what change scenario justifies the boundary]
+ * CHANGES WHEN: [Specific realistic scenario that would cause this file to change]
+ */
+```
+
+Example:
+
+```typescript
+/**
+ * RESPONSIBILITY: Verifies and issues access + refresh token pairs
+ * OWNER: Infrastructure team
+ * BOUNDARY REASON: Token strategy (JWT format, signing algorithm, lifetime) changes
+ *                  on infrastructure team's timeline, independently of business logic
+ * CHANGES WHEN: Switching from JWT to opaque tokens, adding token rotation,
+ *               changing signing algorithm or token lifetime policies
+ */
+export class TokenService implements ITokenService {
+```
+
+### 8. LSP â€” ALL FOUR CONTRACT COMPONENTS MUST BE HONORED
+
+When generating an interface implementation, always verify all four:
+
+```typescript
+// When implementing any interface, add this verification comment:
+/**
+ * LSP CONTRACT VERIFICATION for [InterfaceName]:
+ * âœ“ Accepts: [same or wider input types than interface promises]
+ * âœ“ Returns: [same or narrower return types than interface promises]
+ * âœ“ Throws: [only exceptions defined in interface contract]
+ * âœ“ Side effects: [system state changes match what interface implies]
+ * âœ“ Sequences: [save() then findById() returns saved entity]
+ */
+```
+
+FORBIDDEN â€” silent no-ops (worst LSP violation):
+
+```typescript
+class ReadOnlyCache implements ICache {
+  set(key: string, value: unknown): void {
+    // do nothing  â† FORBIDDEN â€” breaks side effect contract silently
+  }
+  delete(key: string): void {
+    // do nothing  â† FORBIDDEN â€” caller assumes key is gone after this
+  }
+}
+```
+
+### 9. ISP â€” SPLIT ONLY WHEN A CLIENT IS CONCRETELY HARMED
+
+Before splitting an interface, add this decision comment:
+
+```typescript
+/**
+ * ISP DECISION: Why this interface is split
+ * Specific client harmed: [name the client]
+ * Concrete harm: [forced to stub X methods / recompiled on unrelated changes]
+ * Result after split: [client's dependency is leaner and safer]
+ */
+```
+
+Do NOT split an interface just because a client "doesn't call" some methods.
+Split only when the client is forced to implement, stub, or be unnecessarily coupled.
+
+### 10. NO ENVIRONMENT CHECKS IN BUSINESS LOGIC
+
+FORBIDDEN:
+
+```typescript
+class UserService {
+  async sendEmail(email: string) {
+    if (process.env.NODE_ENV === 'test') return; // FORBIDDEN
+    await sgMail.send(...);
+  }
+}
+```
+
+REQUIRED â€” inject environment-appropriate implementation:
+
+```typescript
+// In tests: inject MockEmailService
+// In production: inject SendGridEmailService
+// UserService never knows which one it has
+class UserService {
+  constructor(private readonly emailService: IEmailService) {}
+
+  async sendEmail(email: string) {
+    await this.emailService.send(email); // always calls the injected one
+  }
+}
+```
+
+---
+
+## FILE STRUCTURE ENFORCEMENT
+
+When generating a feature, always produce files in this structure:
+
+```
+src/
+â”œâ”€â”€ domain/                    # Pure business logic â€” no infrastructure imports
+â”‚   â”œâ”€â”€ [feature]/
+â”‚   â”‚   â”œâ”€â”€ [Feature]Service.ts        # Orchestrator â€” zero implementation details
+â”‚   â”‚   â”œâ”€â”€ [Feature]Validator.ts      # Pure validation functions
+â”‚   â”‚   â””â”€â”€ [Feature]Types.ts          # Domain types and interfaces
+â”‚
+â”œâ”€â”€ interfaces/                # Contracts â€” domain language only
+â”‚   â”œâ”€â”€ I[Feature]Repository.ts
+â”‚   â”œâ”€â”€ I[Feature]Service.ts
+â”‚   â””â”€â”€ I[Dependency].ts
+â”‚
+â”œâ”€â”€ infrastructure/            # All external dependencies live here only
+â”‚   â”œâ”€â”€ database/
+â”‚   â”‚   â””â”€â”€ Postgres[Feature]Repository.ts
+â”‚   â”œâ”€â”€ email/
+â”‚   â”‚   â””â”€â”€ SendGrid[Feature]Emailer.ts
+â”‚   â””â”€â”€ payment/
+â”‚       â””â”€â”€ Stripe[Feature]Gateway.ts
+â”‚
+â”œâ”€â”€ composition/               # Wiring â€” the only "open" place
+â”‚   â””â”€â”€ [feature]Composition.ts        # Creates and injects all dependencies
+â”‚
+â””â”€â”€ controllers/               # HTTP translation layer only
+    â””â”€â”€ [Feature]Controller.ts
+```
+
+Frontend structure:
+
+```
+src/
+â”œâ”€â”€ components/[Feature]/
+â”‚   â””â”€â”€ [Feature]Form.tsx      # Renders only â€” zero logic
+â”œâ”€â”€ hooks/
+â”‚   â””â”€â”€ use[Feature].ts        # Orchestrator â€” coordinates flow
+â”œâ”€â”€ api/
+â”‚   â””â”€â”€ [feature]Api.ts        # HTTP only â€” no business logic
+â”œâ”€â”€ validation/
+â”‚   â””â”€â”€ [feature]Validation.ts # Pure functions â€” no async, no imports
+â””â”€â”€ services/
+    â””â”€â”€ [feature]Storage.ts    # Storage mechanism abstracted
+```
+
+---
+
+## SOLID VIOLATION DETECTION â€” STOP AND CORRECT
+
+If you detect any of these patterns in developer's code, STOP and correct before proceeding:
+
+| Pattern detected                            | Violation        | What to say                                                                                                                      |
+| ------------------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Direct infrastructure import in service     | DIP              | "This violates DIP â€” [Service] imports [Library] directly. Extract I[Library] interface. Move import to infrastructure layer." |
+| `new ConcreteClass()` in business class     | DIP              | "Inject this dependency via constructor. Wire it in the composition root."                                                       |
+| Growing if/else on type field               | OCP              | "This is an OCP violation. Every new variant modifies this file. Apply Strategy pattern with registry."                          |
+| Multiple teams editing one file             | SRP              | "Name the actors. Split by actor boundary, not layer boundary."                                                                  |
+| `instanceof` check before using a type      | LSP              | "instanceof checks mean subtypes are not substitutable. Redesign the contract."                                                  |
+| Silent no-op in interface implementation    | LSP              | "Silent no-ops are the most dangerous LSP violation â€” they break state contracts without throwing."                            |
+| Interface method in infrastructure language | DIP Rule 2       | "Redesign in domain language. executeRawQuery() is a PostgreSQL term, not a domain term."                                        |
+| Logic inside a React component              | SRP/Architecture | "Move to useFeature hook. Component renders only."                                                                               |
+| `process.env.NODE_ENV === 'test'` in logic  | DIP              | "Inject environment-appropriate implementation. Remove environment check from business logic."                                   |
+
+---
+
+## PATTERN SUGGESTION RULES
+
+When suggesting a GOF design pattern, always follow this format:
+
+```
+PATTERN SUGGESTED: [Pattern Name]
+SOLID VIOLATION IT SOLVES: [Which principle and how]
+WHY THIS PATTERN: [Specific reason for this situation]
+WHEN NOT TO USE IT: [Honest tradeoff â€” when this pattern is overkill]
+ALTERNATIVE IF SIMPLER: [What to use if this pattern is too heavy for current scale]
+```
+
+Never suggest a pattern without naming the SOLID violation that motivated it.
+Never suggest a pattern without an honest "when NOT to use this" statement.
+
+---
+
+## THE ONE-FILE CHANGE TEST â€” MANDATORY
+
+Before finalizing any architecture, apply this test for every likely change scenario:
+
+For each scenario: "If [actor] asks me to [change], how many files do I touch?"
+
+- 1 file â†’ architecture is correct
+- 2 files â†’ acceptable if the second file is only the composition root
+- 3+ files â†’ hidden coupling exists, find it and fix it before proceeding
+
+If you generate an architecture that fails this test for any likely scenario,
+flag it immediately and propose the fix.
+
+---
+
+## WHAT GOOD CODE COMMENTS LOOK LIKE
+
+Every non-obvious architectural decision must have a comment explaining WHY, not WHAT:
+
+```typescript
+// BAD â€” describes what the code does (obvious from reading it)
+// Create a new user
+const user = await userRepository.create(userData);
+
+// GOOD â€” explains the architectural decision
+// UserRepository is injected â€” this service never imports the DB directly.
+// Switching from PostgreSQL to MongoDB requires zero changes to this file.
+const user = await this.userRepository.create(userData);
+
+// GOOD â€” explains a boundary decision
+// tokenService is the ONLY file in this codebase that imports 'jsonwebtoken'.
+// All other files call tokenService.issue() and tokenService.verify().
+// Token strategy changes (algorithm, format, lifetime) never propagate beyond this file.
+const tokens = await this.tokenService.issue(identity);
+```
