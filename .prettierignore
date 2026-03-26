@@ -1,0 +1,10 @@
+node_modules
+.next
+out
+dist
+coverage
+convex/_generated
+*.log
+tsconfig.tsbuildinfo
+package-lock.json
+

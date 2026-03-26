@@ -449,9 +449,7 @@ export const listSubcategoriesForSetup = query({
         .query("subcategories")
         .withIndex("by_category_id", (q) => q.eq("categoryId", args.categoryId!))
         .collect();
-      return rows
-        .filter((row) => row.isActive)
-        .sort((a, b) => a.name.localeCompare(b.name));
+      return rows.filter((row) => row.isActive).sort((a, b) => a.name.localeCompare(b.name));
     }
 
     const rows = await ctx.db
@@ -497,12 +495,7 @@ export const updateSubcategoryForSetup = mutation({
 
     assertNonEmptyName(args.name);
     const category = await assertCategoryExistsAndActive(ctx, args.categoryId);
-    await assertNoActiveSubcategoryNameCollision(
-      ctx,
-      category._id,
-      args.name,
-      args.subcategoryId,
-    );
+    await assertNoActiveSubcategoryNameCollision(ctx, category._id, args.name, args.subcategoryId);
 
     await ctx.db.patch(args.subcategoryId, {
       categoryId: category._id,

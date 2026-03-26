@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "format": "npx prettier --write .",
+    "format:check": "npx prettier --check .",
     "db:deploy": "npx convex deploy -y",
     "db:seed": "npx convex run setup:bootstrapSeed",
     "db:health": "npx convex run setupHealth:assertDbHealth",
@@ -40,6 +42,8 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
+    "prettier": "^3.8.1",
+    "prettier-plugin-tailwindcss": "^0.7.2",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

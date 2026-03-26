@@ -16,10 +16,7 @@ const accountPurpose = v.union(
   v.literal("INVESTMENT"),
 );
 
-const transactionType = v.union(
-  v.literal("EXPENSE"),
-  v.literal("INVESTMENT_CONTRIBUTION"),
-);
+const transactionType = v.union(v.literal("EXPENSE"), v.literal("INVESTMENT_CONTRIBUTION"));
 
 const categoryTransactionType = v.union(
   v.literal("EXPENSE"),
@@ -74,11 +71,7 @@ const investmentType = v.union(
   v.literal("OTHER"),
 );
 
-const budgetSnapshotStatus = v.union(
-  v.literal("OK"),
-  v.literal("WARNING"),
-  v.literal("OVER"),
-);
+const budgetSnapshotStatus = v.union(v.literal("OK"), v.literal("WARNING"), v.literal("OVER"));
 
 const alertType = v.union(
   v.literal("BUDGET_WARNING"),

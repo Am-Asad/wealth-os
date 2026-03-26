@@ -3,10 +3,7 @@ import { mutation } from "./_generated/server";
 
 const nowIso = () => new Date().toISOString();
 
-const transactionType = v.union(
-  v.literal("EXPENSE"),
-  v.literal("INVESTMENT_CONTRIBUTION"),
-);
+const transactionType = v.union(v.literal("EXPENSE"), v.literal("INVESTMENT_CONTRIBUTION"));
 
 const recurringType = v.union(
   v.literal("EXPENSE"),
@@ -22,11 +19,7 @@ const recurringFrequency = v.union(
   v.literal("YEARLY"),
 );
 
-const budgetSnapshotStatus = v.union(
-  v.literal("OK"),
-  v.literal("WARNING"),
-  v.literal("OVER"),
-);
+const budgetSnapshotStatus = v.union(v.literal("OK"), v.literal("WARNING"), v.literal("OVER"));
 
 const alertType = v.union(
   v.literal("BUDGET_WARNING"),
