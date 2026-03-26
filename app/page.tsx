@@ -1,15 +1,16 @@
 "use client";
 import { Unauthenticated } from "convex/react";
 import { SignInButton } from "@clerk/nextjs";
+import { Button } from "@/components/ui/button";
 
 const LandingPage = () => {
   return (
     <div className="flex justify-center items-center h-screen">
       <Unauthenticated>
         <SignInButton>
-          <button className="bg-blue-500 text-white p-2 rounded-md">
+          <Button className="hover:cursor-pointer hover:opacity-80">
             Sign in
-          </button>
+          </Button>
         </SignInButton>
       </Unauthenticated>
     </div>

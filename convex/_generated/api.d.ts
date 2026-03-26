@@ -8,13 +8,23 @@
  * @module
  */
 
+import type * as constraints from "../constraints.js";
+import type * as http from "../http.js";
+import type * as setup from "../setup.js";
+import type * as setupHealth from "../setupHealth.js";
+
 import type {
   ApiFromModules,
   FilterApi,
   FunctionReference,
 } from "convex/server";
 
-declare const fullApi: ApiFromModules<{}>;
+declare const fullApi: ApiFromModules<{
+  constraints: typeof constraints;
+  http: typeof http;
+  setup: typeof setup;
+  setupHealth: typeof setupHealth;
+}>;
 
 /**
  * A utility for referencing Convex functions in your app's public API.

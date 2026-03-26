@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:deploy": "npx convex deploy -y",
+    "db:seed": "npx convex run setup:bootstrapSeed",
+    "db:health": "npx convex run setupHealth:assertDbHealth",
+    "db:bootstrap": "npm run db:deploy && npm run db:seed && npm run db:health"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.0.7",
