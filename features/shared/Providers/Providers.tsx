@@ -1,8 +1,13 @@
 "use client";
-import { ConvexClientProvider } from "./ConvexClientProvider";
+import ClerkClientProvider from "./ClerkClientProvider";
+import ConvexClientProvider from "./ConvexClientProvider";
 
 const Providers = ({ children }: { children: React.ReactNode }) => {
-  return <ConvexClientProvider>{children}</ConvexClientProvider>;
+  return (
+    <ClerkClientProvider>
+      <ConvexClientProvider>{children}</ConvexClientProvider>
+    </ClerkClientProvider>
+  );
 };
 
 export default Providers;
