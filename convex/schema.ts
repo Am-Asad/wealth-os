@@ -9,6 +9,13 @@ const accountType = v.union(
   v.literal("CREDIT_CARD"),
 );
 
+const accountPurpose = v.union(
+  v.literal("GENERAL"),
+  v.literal("EMERGENCY_FUND"),
+  v.literal("GOAL_SAVINGS"),
+  v.literal("INVESTMENT"),
+);
+
 const transactionType = v.union(
   v.literal("EXPENSE"),
   v.literal("INVESTMENT_CONTRIBUTION"),
@@ -101,7 +108,9 @@ export default defineSchema({
 
   accounts: defineTable({
     name: v.string(),
+    nameKey: v.string(),
     type: accountType,
+    purpose: accountPurpose,
     bucketId: v.id("buckets"),
     openingBalanceMinor: v.int64(),
     openingDate: v.string(),
@@ -114,7 +123,8 @@ export default defineSchema({
   })
     .index("by_bucket_id", ["bucketId"])
     .index("by_type", ["type"])
-    .index("by_is_active", ["isActive"]),
+    .index("by_is_active", ["isActive"])
+    .index("by_is_active_and_name_key", ["isActive", "nameKey"]),
 
   categories: defineTable({
     name: v.string(),
