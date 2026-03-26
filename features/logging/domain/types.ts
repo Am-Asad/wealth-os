@@ -10,3 +10,5 @@ export type LoggingHistoryEntry = {
   id: string;
   summary: string;
 };
+
+export type LoggingTabs = "actions" | "history";

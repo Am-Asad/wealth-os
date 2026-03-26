@@ -1,5 +1,4 @@
 "use client";
-
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -13,7 +12,7 @@ const sections = [
   { title: "Alert thresholds", href: "/settings/thresholds" },
 ];
 
-export default function SettingsWorkspace() {
+const SettingsWorkspace = () => {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {sections.map((section) => (
@@ -30,4 +29,6 @@ export default function SettingsWorkspace() {
       ))}
     </div>
   );
-}
+};
+
+export default SettingsWorkspace;

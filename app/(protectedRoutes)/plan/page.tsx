@@ -1,4 +1,4 @@
-import AppTopBar from "@/features/shared/ui/AppShell/AppTopBar";
+import AppTopBar from "@/features/shared/ui/AppTopBar";
 import PlanningWorkspace from "@/features/planning/ui/PlanningWorkspace";
 
 export default function PlanPage() {

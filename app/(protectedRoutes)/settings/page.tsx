@@ -1,7 +1,7 @@
-import AppTopBar from "@/features/shared/ui/AppShell/AppTopBar";
+import AppTopBar from "@/features/shared/ui/AppTopBar";
 import SettingsWorkspace from "@/features/settings/ui/SettingsWorkspace";
 
-export default function SettingsPage() {
+const SettingsPage = () => {
   return (
     <>
       <AppTopBar title="Settings" subtitle="Manage entities and thresholds" />
@@ -10,4 +10,6 @@ export default function SettingsPage() {
       </main>
     </>
   );
-}
+};
+
+export default SettingsPage;
