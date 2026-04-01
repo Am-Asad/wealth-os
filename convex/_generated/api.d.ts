@@ -10,8 +10,10 @@
 
 import type * as constraints from "../constraints.js";
 import type * as http from "../http.js";
+import type * as monthlyPlan from "../monthlyPlan.js";
 import type * as setup from "../setup.js";
 import type * as setupHealth from "../setupHealth.js";
+import type * as setupWizard from "../setupWizard.js";
 
 import type {
   ApiFromModules,
@@ -22,8 +24,10 @@ import type {
 declare const fullApi: ApiFromModules<{
   constraints: typeof constraints;
   http: typeof http;
+  monthlyPlan: typeof monthlyPlan;
   setup: typeof setup;
   setupHealth: typeof setupHealth;
+  setupWizard: typeof setupWizard;
 }>;
 
 /**

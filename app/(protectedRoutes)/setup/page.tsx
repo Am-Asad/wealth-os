@@ -1,4 +1,4 @@
-import AppTopBar from "@/features/shared/ui/AppShell/AppTopBar";
+import AppTopBar from "@/features/shared/ui/AppTopBar";
 import SetupWizardWorkspace from "@/features/setupWizard/ui/components/SetupWizardWorkspace";
 
 export default function SetupPage() {

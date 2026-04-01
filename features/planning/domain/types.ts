@@ -13,3 +13,15 @@ export type WeeklyReviewProgressEntry = {
 };
 
 export type MonthCloseChecklistItem = string;
+
+export type MonthlyPlanFormState = {
+  year: number;
+  month: number;
+  expectedIncomeMinor: string;
+  needsAllocationMinor: string;
+  investmentsAllocationMinor: string;
+  savingsAllocationMinor: string;
+  charityAllocationMinor: string;
+  flexAllocationMinor: string;
+  notes: string;
+};

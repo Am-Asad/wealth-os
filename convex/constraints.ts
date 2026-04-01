@@ -1,36 +1,15 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { mutation, MutationCtx } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
+import { api } from "./_generated/api";
 
-const nowIso = () => new Date().toISOString();
-
-const transactionType = v.union(v.literal("EXPENSE"), v.literal("INVESTMENT_CONTRIBUTION"));
-
-const recurringType = v.union(
-  v.literal("EXPENSE"),
-  v.literal("INVESTMENT_CONTRIBUTION"),
-  v.literal("INCOME"),
-);
-
-const recurringFrequency = v.union(
-  v.literal("DAILY"),
-  v.literal("WEEKLY"),
-  v.literal("MONTHLY"),
-  v.literal("QUARTERLY"),
-  v.literal("YEARLY"),
-);
-
-const budgetSnapshotStatus = v.union(v.literal("OK"), v.literal("WARNING"), v.literal("OVER"));
-
-const alertType = v.union(
-  v.literal("BUDGET_WARNING"),
-  v.literal("BUDGET_EXCEEDED"),
-  v.literal("GOAL_BEHIND_SCHEDULE"),
-  v.literal("EMERGENCY_FUND_LOW"),
-  v.literal("LOW_ACCOUNT_BALANCE"),
-  v.literal("LARGE_EXPENSE"),
-  v.literal("NO_INVESTMENT_THIS_MONTH"),
-  v.literal("OVERDUE_RECURRING"),
-);
+const toMonth = (date: string) => {
+  const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(date);
+  if (!match) {
+    throw new Error("date must be in YYYY-MM-DD format.");
+  }
+  return `${match[1]}-${match[2]}`;
+};
 
 const assertPositiveMinor = (field: string, value: bigint) => {
   if (value <= BigInt(0)) {
@@ -38,9 +17,54 @@ const assertPositiveMinor = (field: string, value: bigint) => {
   }
 };
 
-const assertMonth = (month: number) => {
-  if (month < 1 || month > 12) {
-    throw new Error("month must be in range 1..12.");
+const requireUserId = async (ctx: MutationCtx) => {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw new Error("Authentication required.");
+  }
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
+    .unique();
+  if (!user) {
+    throw new Error("User profile not found.");
+  }
+  return user._id;
+};
+
+const assertAccountOwnership = async (
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  accountId: Id<"accounts">,
+  fieldName: string,
+) => {
+  const account = await ctx.db.get(accountId);
+  if (!account || account.userId !== userId) {
+    throw new Error(`${fieldName} must belong to the authenticated user.`);
+  }
+  if (!account.isActive) {
+    throw new Error(`${fieldName} must reference an active account.`);
+  }
+};
+
+const assertCategoryOwnership = async (
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  categoryId: Id<"categories">,
+) => {
+  const category = await ctx.db.get(categoryId);
+  if (!category || category.userId !== userId) {
+    throw new Error("categoryId must belong to the authenticated user.");
+  }
+  if (!category.isActive) {
+    throw new Error("categoryId must reference an active category.");
+  }
+};
+
+const assertGoalOwnership = async (ctx: MutationCtx, userId: Id<"users">, goalId: Id<"goals">) => {
+  const goal = await ctx.db.get(goalId);
+  if (!goal || goal.userId !== userId) {
+    throw new Error("linkedGoalId must belong to the authenticated user.");
   }
 };
 
@@ -57,34 +81,7 @@ export const createMonthlyPlan = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    assertMonth(args.month);
-
-    const existing = await ctx.db
-      .query("monthly_plan")
-      .withIndex("by_year_and_month", (q) => q.eq("year", args.year).eq("month", args.month))
-      .unique();
-    if (existing) {
-      throw new Error("A monthly plan for this year and month already exists.");
-    }
-
-    const allocationSum =
-      args.needsAllocationMinor +
-      args.investmentsAllocationMinor +
-      args.savingsAllocationMinor +
-      args.charityAllocationMinor +
-      args.flexAllocationMinor;
-
-    if (allocationSum !== args.expectedIncomeMinor) {
-      throw new Error("Bucket allocations must sum exactly to expected income.");
-    }
-
-    const now = nowIso();
-    return await ctx.db.insert("monthly_plan", {
-      ...args,
-      isClosed: false,
-      createdAt: now,
-      updatedAt: now,
-    });
+    return await ctx.runMutation(api.monthlyPlan.createMonthlyPlan, args);
   },
 });
 
@@ -94,17 +91,88 @@ export const createTransfer = mutation({
     amountMinor: v.int64(),
     fromAccountId: v.id("accounts"),
     toAccountId: v.id("accounts"),
-    linkedGoalId: v.optional(v.id("financial_goals")),
+    linkedGoalId: v.optional(v.id("goals")),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    void args.linkedGoalId;
     assertPositiveMinor("amountMinor", args.amountMinor);
     if (args.fromAccountId === args.toAccountId) {
       throw new Error("fromAccountId and toAccountId must be different.");
     }
 
-    const now = nowIso();
-    return await ctx.db.insert("transfers", { ...args, createdAt: now, updatedAt: now });
+    const userId = await requireUserId(ctx);
+    const month = toMonth(args.date);
+    await assertAccountOwnership(ctx, userId, args.fromAccountId, "fromAccountId");
+    await assertAccountOwnership(ctx, userId, args.toAccountId, "toAccountId");
+
+    // 1) Create transfer shell record (transaction ids patched later).
+    const transferId = await ctx.db.insert("transfers", {
+      userId,
+      fromAccountId: args.fromAccountId,
+      toAccountId: args.toAccountId,
+      amount: args.amountMinor,
+      fromTransactionId: undefined,
+      toTransactionId: undefined,
+      note: args.notes,
+      localDate: args.date,
+      month,
+    });
+
+    // 2) Create paired transfer transactions linked via transferId.
+    const outTxId = await ctx.db.insert("transactions", {
+      userId,
+      type: "TRANSFER_OUT",
+      amount: args.amountMinor,
+      accountId: args.fromAccountId,
+      categoryId: null,
+      subCategoryId: null,
+      goalId: null,
+      transferId,
+      budgetMonth: null,
+      incomeType: null,
+      isRecurring: false,
+      recurringTemplateId: undefined,
+      isException: false,
+      exceptionType: null,
+      isReversal: false,
+      correctionForId: undefined,
+      note: args.notes,
+      receiptUrl: undefined,
+      localDate: args.date,
+      month,
+    });
+
+    const inTxId = await ctx.db.insert("transactions", {
+      userId,
+      type: "TRANSFER_IN",
+      amount: args.amountMinor,
+      accountId: args.toAccountId,
+      categoryId: null,
+      subCategoryId: null,
+      goalId: null,
+      transferId,
+      budgetMonth: null,
+      incomeType: null,
+      isRecurring: false,
+      recurringTemplateId: undefined,
+      isException: false,
+      exceptionType: null,
+      isReversal: false,
+      correctionForId: undefined,
+      note: args.notes,
+      receiptUrl: undefined,
+      localDate: args.date,
+      month,
+    });
+
+    // 3) Backfill link fields on transfer.
+    await ctx.db.patch(transferId, {
+      fromTransactionId: outTxId,
+      toTransactionId: inTxId,
+    });
+
+    return { ok: true, transferId, fromTransactionId: outTxId, toTransactionId: inTxId };
   },
 });
 
@@ -112,33 +180,76 @@ export const createTransaction = mutation({
   args: {
     date: v.string(),
     amountMinor: v.int64(),
-    type: transactionType,
+    type: v.union(v.literal("EXPENSE"), v.literal("INCOME")),
     accountId: v.id("accounts"),
-    categoryId: v.id("categories"),
-    subcategoryId: v.optional(v.id("subcategories")),
-    investmentId: v.optional(v.id("investments")),
-    recurringRuleId: v.optional(v.id("recurring_rules")),
-    linkedGoalId: v.optional(v.id("financial_goals")),
-    payee: v.optional(v.string()),
-    description: v.optional(v.string()),
-    tags: v.optional(v.string()),
+    categoryId: v.optional(v.id("categories")),
+    subcategoryId: v.optional(v.id("subCategories")),
+    linkedGoalId: v.optional(v.id("goals")),
     receiptUrl: v.optional(v.string()),
-    isFlagged: v.optional(v.boolean()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     assertPositiveMinor("amountMinor", args.amountMinor);
+    const userId = await requireUserId(ctx);
+    const month = toMonth(args.date);
+    await assertAccountOwnership(ctx, userId, args.accountId, "accountId");
 
-    if (args.type === "INVESTMENT_CONTRIBUTION" && !args.investmentId) {
-      throw new Error("investmentId is required for INVESTMENT_CONTRIBUTION transactions.");
+    if (args.type === "EXPENSE" && !args.categoryId) {
+      throw new Error("categoryId is required for EXPENSE.");
+    }
+    if (args.categoryId) {
+      await assertCategoryOwnership(ctx, userId, args.categoryId);
+    }
+    if (args.linkedGoalId) {
+      await assertGoalOwnership(ctx, userId, args.linkedGoalId);
     }
 
-    const now = nowIso();
+    if (args.type === "INCOME") {
+      return await ctx.db.insert("transactions", {
+        userId,
+        type: "INCOME",
+        amount: args.amountMinor,
+        accountId: args.accountId,
+        categoryId: undefined,
+        subCategoryId: undefined,
+        goalId: undefined,
+        transferId: undefined,
+        budgetMonth: month,
+        incomeType: "BASE",
+        isRecurring: false,
+        recurringTemplateId: undefined,
+        isException: false,
+        exceptionType: undefined,
+        isReversal: false,
+        correctionForId: undefined,
+        note: args.notes,
+        receiptUrl: args.receiptUrl,
+        localDate: args.date,
+        month,
+      });
+    }
+
     return await ctx.db.insert("transactions", {
-      ...args,
-      isFlagged: args.isFlagged ?? false,
-      createdAt: now,
-      updatedAt: now,
+      userId,
+      type: "EXPENSE",
+      amount: args.amountMinor,
+      accountId: args.accountId,
+      categoryId: args.categoryId!,
+      subCategoryId: args.subcategoryId,
+      goalId: args.linkedGoalId,
+      transferId: undefined,
+      budgetMonth: undefined,
+      incomeType: undefined,
+      isRecurring: false,
+      recurringTemplateId: undefined,
+      isException: false,
+      exceptionType: undefined,
+      isReversal: false,
+      correctionForId: undefined,
+      note: args.notes,
+      receiptUrl: args.receiptUrl,
+      localDate: args.date,
+      month,
     });
   },
 });
@@ -147,66 +258,94 @@ export const createIncomeEntry = mutation({
   args: {
     date: v.string(),
     amountMinor: v.int64(),
-    grossAmountMinor: v.optional(v.int64()),
-    taxDeductedMinor: v.optional(v.int64()),
-    source: v.string(),
-    sourceType: v.union(
-      v.literal("SALARY"),
-      v.literal("FREELANCE"),
-      v.literal("WINDFALL"),
-      v.literal("SIDE_INCOME"),
-      v.literal("INVESTMENT_RETURN"),
-      v.literal("OTHER"),
-    ),
     accountId: v.id("accounts"),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     assertPositiveMinor("amountMinor", args.amountMinor);
-    if (args.grossAmountMinor !== undefined && args.grossAmountMinor <= BigInt(0)) {
-      throw new Error("grossAmountMinor must be greater than zero when provided.");
-    }
-    if (args.taxDeductedMinor !== undefined && args.taxDeductedMinor < BigInt(0)) {
-      throw new Error("taxDeductedMinor cannot be negative.");
-    }
-
-    const now = nowIso();
-    return await ctx.db.insert("income_entries", { ...args, createdAt: now, updatedAt: now });
+    const userId = await requireUserId(ctx);
+    const month = toMonth(args.date);
+    await assertAccountOwnership(ctx, userId, args.accountId, "accountId");
+    return await ctx.db.insert("transactions", {
+      userId,
+      type: "INCOME",
+      amount: args.amountMinor,
+      accountId: args.accountId,
+      categoryId: null,
+      subCategoryId: null,
+      goalId: null,
+      transferId: null,
+      budgetMonth: month,
+      incomeType: "BASE",
+      isRecurring: false,
+      recurringTemplateId: undefined,
+      isException: false,
+      exceptionType: null,
+      isReversal: false,
+      correctionForId: undefined,
+      note: args.notes,
+      receiptUrl: undefined,
+      localDate: args.date,
+      month,
+    });
   },
 });
 
 export const createIncomeAllocation = mutation({
   args: {
-    incomeEntryId: v.id("income_entries"),
-    bucketId: v.id("buckets"),
+    incomeEntryId: v.id("transactions"),
+    bucketId: v.optional(v.string()),
     amountMinor: v.int64(),
     toAccountId: v.optional(v.id("accounts")),
-    goalId: v.optional(v.id("financial_goals")),
+    goalId: v.optional(v.id("goals")),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    void args.bucketId;
     assertPositiveMinor("amountMinor", args.amountMinor);
-
-    const incomeEntry = await ctx.db.get(args.incomeEntryId);
-    if (!incomeEntry) {
-      throw new Error("incomeEntryId does not exist.");
+    if (!args.goalId) {
+      throw new Error("goalId is required for income allocation.");
+    }
+    if (!args.toAccountId) {
+      throw new Error("toAccountId is required for income allocation.");
     }
 
-    const existingAllocations = await ctx.db
-      .query("income_allocations")
-      .withIndex("by_income_entry_id", (q) => q.eq("incomeEntryId", args.incomeEntryId))
-      .collect();
-    const allocatedSoFar = existingAllocations.reduce(
-      (sum, row) => sum + row.amountMinor,
-      BigInt(0),
-    );
-    const newTotal = allocatedSoFar + args.amountMinor;
-    if (newTotal > incomeEntry.amountMinor) {
-      throw new Error("Total allocations cannot exceed the parent income entry amount.");
+    const userId = await requireUserId(ctx);
+    const sourceIncome = await ctx.db.get(args.incomeEntryId);
+    if (!sourceIncome || sourceIncome.userId !== userId || sourceIncome.type !== "INCOME") {
+      throw new Error("incomeEntryId must reference an INCOME transaction owned by user.");
     }
+    await assertAccountOwnership(ctx, userId, args.toAccountId, "toAccountId");
+    await assertGoalOwnership(ctx, userId, args.goalId);
 
-    const now = nowIso();
-    return await ctx.db.insert("income_allocations", { ...args, createdAt: now, updatedAt: now });
+    const goal = await ctx.db.get(args.goalId);
+    if (!goal) {
+      throw new Error("goalId not found.");
+    }
+    const month = toMonth(sourceIncome.localDate);
+
+    return await ctx.db.insert("transactions", {
+      userId,
+      type: "GOAL_ALLOCATION",
+      amount: args.amountMinor,
+      accountId: args.toAccountId,
+      categoryId: goal.categoryId,
+      subCategoryId: null,
+      goalId: args.goalId,
+      transferId: null,
+      budgetMonth: null,
+      incomeType: null,
+      isRecurring: false,
+      recurringTemplateId: undefined,
+      isException: false,
+      exceptionType: null,
+      isReversal: false,
+      correctionForId: undefined,
+      note: args.notes,
+      receiptUrl: undefined,
+      localDate: sourceIncome.localDate,
+      month,
+    });
   },
 });
 
@@ -214,143 +353,56 @@ export const createRecurringRule = mutation({
   args: {
     name: v.string(),
     amountMinor: v.int64(),
-    type: recurringType,
-    frequency: recurringFrequency,
-    dayOfMonth: v.optional(v.number()),
-    dayOfWeek: v.optional(v.number()),
+    type: v.union(v.literal("EXPENSE"), v.literal("INCOME")),
+    frequency: v.union(v.literal("WEEKLY"), v.literal("MONTHLY"), v.literal("YEARLY")),
     accountId: v.id("accounts"),
-    categoryId: v.id("categories"),
-    subcategoryId: v.optional(v.id("subcategories")),
-    linkedGoalId: v.optional(v.id("financial_goals")),
+    categoryId: v.optional(v.id("categories")),
+    subcategoryId: v.optional(v.id("subCategories")),
     nextDueDate: v.string(),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     assertPositiveMinor("amountMinor", args.amountMinor);
-
-    if (args.dayOfMonth !== undefined && (args.dayOfMonth < 1 || args.dayOfMonth > 31)) {
-      throw new Error("dayOfMonth must be in range 1..31.");
+    const userId = await requireUserId(ctx);
+    await assertAccountOwnership(ctx, userId, args.accountId, "accountId");
+    if (args.type === "EXPENSE" && !args.categoryId) {
+      throw new Error("categoryId is required for EXPENSE recurring template.");
     }
-    if (args.dayOfWeek !== undefined && (args.dayOfWeek < 0 || args.dayOfWeek > 6)) {
-      throw new Error("dayOfWeek must be in range 0..6.");
+    if (args.categoryId) {
+      await assertCategoryOwnership(ctx, userId, args.categoryId);
+    }
+    if (args.type === "EXPENSE") {
+      return await ctx.db.insert("recurringTransactions", {
+        userId,
+        templateName: args.name,
+        type: "EXPENSE",
+        amount: args.amountMinor,
+        accountId: args.accountId,
+        categoryId: args.categoryId!,
+        subCategoryId: args.subcategoryId,
+        frequency: args.frequency,
+        startDate: args.nextDueDate,
+        validUntil: undefined,
+        lastGeneratedDate: undefined,
+        isActive: true,
+        note: args.notes,
+      });
     }
 
-    const now = nowIso();
-    return await ctx.db.insert("recurring_rules", {
-      ...args,
+    return await ctx.db.insert("recurringTransactions", {
+      userId,
+      templateName: args.name,
+      type: "INCOME",
+      amount: args.amountMinor,
+      accountId: args.accountId,
+      categoryId: null,
+      subCategoryId: null,
+      frequency: args.frequency,
+      startDate: args.nextDueDate,
+      validUntil: undefined,
+      lastGeneratedDate: undefined,
       isActive: true,
-      lastGenerated: undefined,
-      createdAt: now,
-      updatedAt: now,
-    });
-  },
-});
-
-export const createPortfolioSnapshot = mutation({
-  args: {
-    investmentId: v.id("investments"),
-    snapshotDate: v.string(),
-    marketValueMinor: v.int64(),
-    unitsHeldMicros: v.optional(v.int64()),
-    gainLossMinor: v.optional(v.int64()),
-    gainLossBps: v.optional(v.int64()),
-    notes: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    assertPositiveMinor("marketValueMinor", args.marketValueMinor);
-
-    const existing = await ctx.db
-      .query("portfolio_snapshots")
-      .withIndex("by_investment_id_and_snapshot_date", (q) =>
-        q.eq("investmentId", args.investmentId).eq("snapshotDate", args.snapshotDate),
-      )
-      .unique();
-    if (existing) {
-      throw new Error("A portfolio snapshot already exists for this investment/date.");
-    }
-
-    const now = nowIso();
-    return await ctx.db.insert("portfolio_snapshots", { ...args, createdAt: now, updatedAt: now });
-  },
-});
-
-export const createBudgetSnapshot = mutation({
-  args: {
-    year: v.number(),
-    month: v.number(),
-    bucketId: v.id("buckets"),
-    plannedAmountMinor: v.int64(),
-    actualSpentMinor: v.int64(),
-    varianceMinor: v.int64(),
-    varianceBps: v.int64(),
-    status: budgetSnapshotStatus,
-  },
-  handler: async (ctx, args) => {
-    assertMonth(args.month);
-
-    const existing = await ctx.db
-      .query("budget_snapshots")
-      .withIndex("by_year_and_month_and_bucket_id", (q) =>
-        q.eq("year", args.year).eq("month", args.month).eq("bucketId", args.bucketId),
-      )
-      .unique();
-    if (existing) {
-      throw new Error("A budget snapshot already exists for this year/month/bucket.");
-    }
-
-    const now = nowIso();
-    return await ctx.db.insert("budget_snapshots", { ...args, createdAt: now, updatedAt: now });
-  },
-});
-
-export const createNetWorthSnapshot = mutation({
-  args: {
-    snapshotDate: v.string(),
-    liquidCashMinor: v.int64(),
-    emergencyFundMinor: v.int64(),
-    goalSavingsMinor: v.int64(),
-    investmentsValueMinor: v.int64(),
-    totalAssetsMinor: v.int64(),
-    totalLiabilitiesMinor: v.int64(),
-    netWorthMinor: v.int64(),
-    totalIncomeMonthMinor: v.int64(),
-    totalExpenseMonthMinor: v.int64(),
-    savingsRateBps: v.optional(v.int64()),
-  },
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("net_worth_snapshots")
-      .withIndex("by_snapshot_date", (q) => q.eq("snapshotDate", args.snapshotDate))
-      .unique();
-    if (existing) {
-      throw new Error("A net worth snapshot already exists for this snapshotDate.");
-    }
-
-    const now = nowIso();
-    return await ctx.db.insert("net_worth_snapshots", { ...args, createdAt: now, updatedAt: now });
-  },
-});
-
-export const createAlert = mutation({
-  args: {
-    alertType,
-    triggeredAt: v.string(),
-    bucketId: v.optional(v.id("buckets")),
-    categoryId: v.optional(v.id("categories")),
-    goalId: v.optional(v.id("financial_goals")),
-    accountId: v.optional(v.id("accounts")),
-    message: v.string(),
-    thresholdMinor: v.optional(v.int64()),
-    actualMinor: v.optional(v.int64()),
-  },
-  handler: async (ctx, args) => {
-    const now = nowIso();
-    return await ctx.db.insert("alerts", {
-      ...args,
-      isDismissed: false,
-      dismissedAt: undefined,
-      createdAt: now,
-      updatedAt: now,
+      note: args.notes,
     });
   },
 });

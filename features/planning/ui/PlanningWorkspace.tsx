@@ -3,8 +3,8 @@ import type { GenericTabItem } from "@/features/shared/ui/GenericTabs";
 import GenericTabs from "@/features/shared/ui/GenericTabs";
 import type { PlanningTabValue } from "../domain/types";
 import MonthlyPlanTabContent from "./MonthlyPlanTabContent";
-import WeekReviewTabContent from "./WeekReviewTabContent";
-import MonthCloseTabContent from "./MonthCloseTabContent";
+import WeekReviewTabContent from "./WeeklyReviewTabContent";
+import MonthCloseTabContent from "./MonthlyCloseTabContent";
 
 const PlanningWorkspace = () => {
   const tabItems: readonly GenericTabItem<PlanningTabValue>[] = [

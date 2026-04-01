@@ -1,8 +1,7 @@
 "use client";
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import type { WeeklyReviewProgressEntry } from "../domain/types";
+import type { WeeklyReviewProgressEntry } from "../../domain/types";
 
 const WEEKLY_REVIEW_PROGRESS: readonly WeeklyReviewProgressEntry[] = [
   { label: "Needs", value: 58 },

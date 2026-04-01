@@ -3,13 +3,13 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const sections = [
-  { title: "Accounts", href: "/setup" },
-  { title: "Categories", href: "/setup" },
-  { title: "Subcategories", href: "/setup" },
-  { title: "Goals", href: "/settings/goals" },
-  { title: "Investments", href: "/settings/investments" },
-  { title: "Recurring rules", href: "/settings/recurring" },
-  { title: "Alert thresholds", href: "/settings/thresholds" },
+  { title: "Accounts", href: "/dashboard" },
+  { title: "Categories", href: "/dashboard" },
+  { title: "Subcategories", href: "/dashboard" },
+  { title: "Goals", href: "/dashboard" },
+  { title: "Investments", href: "/dashboard" },
+  { title: "Recurring rules", href: "/dashboard" },
+  { title: "Alert thresholds", href: "/dashboard" },
 ];
 
 const SettingsWorkspace = () => {
